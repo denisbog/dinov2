@@ -22,9 +22,9 @@ from transformers import (
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
 from transformers.utils.generic import torch_int, is_tensor
 
-logger = logging.get_logger(__name__)
-
 import enum
+
+logger = logging.get_logger(__name__)
 
 
 class BackboneType(enum.Enum):
@@ -332,11 +332,6 @@ def is_local_dist_rank_0():
 
 
 def strtobool(val):
-    """Convert a string representation of truth to true (1) or false (0).
-
-    True values are 'y', 'yes', 't', 'true', 'on', and '1'; false values are 'n', 'no', 'f', 'false', 'off', and '0'.
-    Raises ValueError if 'val' is anything else.
-    """
     val = val.lower()
     if val in {"y", "yes", "t", "true", "on", "1"}:
         return 1
@@ -373,7 +368,6 @@ def get_module_from_name(module, tensor_name: str) -> tuple[Any, str]:
 def _load_parameter_into_model(
     model: "LocalPretrainedModel", param_name: str, tensor: torch.Tensor
 ):
-    """Cast a single parameter `param_name` into the `model`, with value `tensor`."""
     module, param_type = get_module_from_name(model, param_name)
     # This will check potential shape mismatch if skipped before
     module.load_state_dict({param_type: tensor}, strict=False, assign=True)
@@ -639,19 +633,6 @@ class LocalPretrainedConfig:
     def get_config_dict(
         cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """
-        From a `pretrained_model_name_or_path`, resolve to a dictionary of parameters, to be used for instantiating a
-        [`PretrainedConfig`] using `from_dict`.
-
-        Parameters:
-            pretrained_model_name_or_path (`str` or `os.PathLike`):
-                The identifier of the pre-trained checkpoint from which we want the dictionary of parameters.
-
-        Returns:
-            `tuple[Dict, Dict]`: The dictionary(ies) that will be used to instantiate the configuration object.
-
-        """
-
         original_kwargs = copy.deepcopy(kwargs)
         # Get config dict associated with the base config file
         config_dict, kwargs = cls._get_config_dict(
@@ -684,17 +665,11 @@ class LocalPretrainedConfig:
 
     @property
     def use_return_dict(self) -> bool:
-        """
-        `bool`: Whether or not return [`~utils.ModelOutput`] instead of tuples.
-        """
         # If torchscript is set, force `return_dict=False` to avoid jit errors
         return self.return_dict and not self.torchscript
 
     @property
     def output_attentions(self):
-        """
-        `bool`: Whether or not the model should returns all attentions.
-        """
         return self._output_attentions
 
     @output_attentions.setter
@@ -764,81 +739,6 @@ class LocalPretrainedConfig:
         revision: str = "main",
         **kwargs,
     ):
-        r"""
-        Instantiate a [`PretrainedConfig`] (or a derived class) from a pretrained model configuration.
-
-        Args:
-            pretrained_model_name_or_path (`str` or `os.PathLike`):
-                This can be either:
-
-                - a string, the *model id* of a pretrained model configuration hosted inside a model repo on
-                  huggingface.co.
-                - a path to a *directory* containing a configuration file saved using the
-                  [`~PretrainedConfig.save_pretrained`] method, e.g., `./my_model_directory/`.
-                - a path or url to a saved configuration JSON *file*, e.g., `./my_model_directory/configuration.json`.
-            cache_dir (`str` or `os.PathLike`, *optional*):
-                Path to a directory in which a downloaded pretrained model configuration should be cached if the
-                standard cache should not be used.
-            force_download (`bool`, *optional*, defaults to `False`):
-                Whether or not to force to (re-)download the configuration files and override the cached versions if
-                they exist.
-            resume_download:
-                Deprecated and ignored. All downloads are now resumed by default when possible.
-                Will be removed in v5 of Transformers.
-            proxies (`dict[str, str]`, *optional*):
-                A dictionary of proxy servers to use by protocol or endpoint, e.g., `{'http': 'foo.bar:3128',
-                'http://hostname': 'foo.bar:4012'}.` The proxies are used on each request.
-            token (`str` or `bool`, *optional*):
-                The token to use as HTTP bearer authorization for remote files. If `True`, or not specified, will use
-                the token generated when running `hf auth login` (stored in `~/.huggingface`).
-            revision (`str`, *optional*, defaults to `"main"`):
-                The specific model version to use. It can be a branch name, a tag name, or a commit id, since we use a
-                git-based system for storing models and other artifacts on huggingface.co, so `revision` can be any
-                identifier allowed by git.
-
-                <Tip>
-
-                To test a pull request you made on the Hub, you can pass `revision="refs/pr/<pr_number>"`.
-
-                </Tip>
-
-            return_unused_kwargs (`bool`, *optional*, defaults to `False`):
-                If `False`, then this function returns just the final configuration object.
-
-                If `True`, then this functions returns a `Tuple(config, unused_kwargs)` where *unused_kwargs* is a
-                dictionary consisting of the key/value pairs whose keys are not configuration attributes: i.e., the
-                part of `kwargs` which has not been used to update `config` and is otherwise ignored.
-            subfolder (`str`, *optional*, defaults to `""`):
-                In case the relevant files are located inside a subfolder of the model repo on huggingface.co, you can
-                specify the folder name here.
-            kwargs (`dict[str, Any]`, *optional*):
-                The values in kwargs of any keys which are configuration attributes will be used to override the loaded
-                values. Behavior concerning key/value pairs whose keys are *not* configuration attributes is controlled
-                by the `return_unused_kwargs` keyword parameter.
-
-        Returns:
-            [`PretrainedConfig`]: The configuration object instantiated from this pretrained model.
-
-        Examples:
-
-        ```python
-        # We can't instantiate directly the base class *PretrainedConfig* so let's show the examples on a
-        # derived class: BertConfig
-        config = BertConfig.from_pretrained(
-            "google-bert/bert-base-uncased"
-        )  # Download configuration from huggingface.co and cache.
-        config = BertConfig.from_pretrained(
-            "./test/saved_model/"
-        )  # E.g. config (or model) was saved using *save_pretrained('./test/saved_model/')*
-        config = BertConfig.from_pretrained("./test/saved_model/my_configuration.json")
-        config = BertConfig.from_pretrained("google-bert/bert-base-uncased", output_attentions=True, foo=False)
-        assert config.output_attentions == True
-        config, unused_kwargs = BertConfig.from_pretrained(
-            "google-bert/bert-base-uncased", output_attentions=True, foo=False, return_unused_kwargs=True
-        )
-        assert config.output_attentions == True
-        assert unused_kwargs == {"foo": False}
-        ```"""
         kwargs["cache_dir"] = cache_dir
         kwargs["force_download"] = force_download
         kwargs["local_files_only"] = local_files_only
@@ -851,19 +751,6 @@ class LocalPretrainedConfig:
 
     @classmethod
     def from_dict(cls, config_dict: dict[str, Any], **kwargs):
-        """
-        Instantiates a [`PretrainedConfig`] from a Python dictionary of parameters.
-
-        Args:
-            config_dict (`dict[str, Any]`):
-                Dictionary that will be used to instantiate the configuration object. Such a dictionary can be
-                retrieved from a pretrained checkpoint by leveraging the [`~PretrainedConfig.get_config_dict`] method.
-            kwargs (`dict[str, Any]`):
-                Additional parameters from which to initialize the configuration object.
-
-        Returns:
-            [`PretrainedConfig`]: The configuration object instantiated from those parameters.
-        """
         return_unused_kwargs = kwargs.pop("return_unused_kwargs", False)
         # Those arguments may be passed along for our internal telemetry.
         # We remove them so they don't appear in `return_unused_kwargs`.
@@ -978,12 +865,6 @@ class Dinov2Config(LocalPretrainedConfig):
         self.torch_dtype = torch_dtype
 
     def to_dict(self) -> dict[str, Any]:
-        """
-        Serializes this instance to a Python dictionary.
-
-        Returns:
-            `dict[str, Any]`: Dictionary of all the attributes that make up this configuration instance.
-        """
         output = copy.deepcopy(self.__dict__)
         if hasattr(self.__class__, "model_type"):
             output["model_type"] = self.__class__.model_type
@@ -1105,13 +986,6 @@ class LocalPretrainedModel(nn.Module):
         )
 
     def post_init(self):
-        """
-        A method executed at the end of each Transformer model initialization, to execute code that needs the model's
-        modules properly initialized (such as weight initialization).
-
-        This is also used when the user is running distributed code. We add hooks to the modules here, according to
-        the model's tp_plan!
-        """
         self.init_weights()
         self._backward_compatibility_gradient_checkpointing()
 
@@ -1158,11 +1032,6 @@ class LocalPretrainedModel(nn.Module):
         )
 
     def get_parameter_or_buffer(self, target: str):
-        """
-        Return the parameter or buffer given by `target` if it exists, otherwise throw an error. This combines
-        `get_parameter()` and `get_buffer()` in a single handy function. If the target is an `_extra_state` attribute,
-        it will return the extra state provided by the module. Note that it only work if `target` is a leaf of the model.
-        """
         try:
             return self.get_parameter(target)
         except AttributeError:
@@ -1414,10 +1283,6 @@ class DepthAnythingConfig(LocalPretrainedConfig):
         )
 
     def to_dict(self):
-        """
-        Serializes this instance to a Python dictionary. Override the default [`~PretrainedConfig.to_dict`]. Returns:
-            `dict[str, any]`: Dictionary of all the attributes that make up this configuration instance,
-        """
         output = copy.deepcopy(self.__dict__)
 
         if output["backbone_config"] is not None:
@@ -1485,12 +1350,6 @@ class DepthAnythingPreTrainedModel(LocalPretrainedModel):
         loading_base_model_from_task_state_dict: bool = False,
         loading_task_model_from_base_state_dict: bool = False,
     ):
-        """
-        Compute a mapping between the serialized keys on disk `checkpoint_keys`, and the keys that the model
-        that we are loading expects. This is the single entry point for key renaming that will be used during
-        loading.
-        Log if any parameters have been renamed.
-        """
         prefix = self.base_model_prefix
         _prefix = f"{prefix}."
 
@@ -1541,11 +1400,6 @@ class DepthAnythingPreTrainedModel(LocalPretrainedModel):
 
 class ModelOutput(OrderedDict):
     def __init_subclass__(cls) -> None:
-        """Register subclasses as pytree nodes.
-
-        This is necessary to synchronize gradients when using `torch.nn.parallel.DistributedDataParallel` with
-        `static_graph=True` with modules that output `ModelOutput` subclasses.
-        """
         if is_torch_available():
             if version.parse(get_torch_version()) >= version.parse("2.2"):
                 from torch.utils._pytree import register_pytree_node
@@ -1945,13 +1799,6 @@ class DepthAnythingNeck(nn.Module):
 
 
 class DepthAnythingDepthEstimationHead(nn.Module):
-    """
-    Output head consisting of 3 convolutional layers. It progressively halves the feature dimension and upsamples
-    the predictions to the input resolution after the first convolutional layer (details can be found in the DPT paper's
-    supplementary material). The final activation function is either ReLU or Sigmoid, depending on the depth estimation
-    type (relative or metric). For metric depth estimation, the output is scaled by the maximum depth used during pretraining.
-    """
-
     def __init__(self, config):
         super().__init__()
 
@@ -2026,15 +1873,6 @@ class Dinov2Embeddings(nn.Module):
     def interpolate_pos_encoding(
         self, embeddings: torch.Tensor, height: int, width: int
     ) -> torch.Tensor:
-        """
-        This method allows to interpolate the pre-trained position encodings, to be able to use the model on higher resolution
-        images. This method is also adapted to support torch.jit tracing and interpolation at torch.float32 precision.
-
-        Adapted from:
-        - https://github.com/facebookresearch/dino/blob/de9ee3df6cf39fac952ab558447af1fa1365362a/vision_transformer.py#L174-L194, and
-        - https://github.com/facebookresearch/dinov2/blob/e1277af2ba9496fbadf7aec6eba56e8d882d1e35/dinov2/models/vision_transformer.py#L179-L211
-        """
-
         num_patches = embeddings.shape[1] - 1
         num_positions = self.position_embeddings.shape[1] - 1
 
@@ -2100,12 +1938,6 @@ class Dinov2Embeddings(nn.Module):
 
 
 class Dinov2PatchEmbeddings(nn.Module):
-    """
-    This class turns `pixel_values` of shape `(batch_size, num_channels, height, width)` into the initial
-    `hidden_states` (patch embeddings) of shape `(batch_size, seq_length, hidden_size)` to be consumed by a
-    Transformer.
-    """
-
     def __init__(self, config):
         super().__init__()
         image_size, patch_size = config.image_size, config.patch_size
@@ -2145,28 +1977,6 @@ class Dinov2PatchEmbeddings(nn.Module):
 
 
 class GradientCheckpointingLayer(nn.Module):
-    """Base class for layers with gradient checkpointing.
-
-    This class enables gradient checkpointing functionality for a layer. By default, gradient checkpointing is disabled
-    (`gradient_checkpointing = False`). When `model.set_gradient_checkpointing()` is called, gradient checkpointing is
-    enabled by setting `gradient_checkpointing = True` and assigning a checkpointing function to `_gradient_checkpointing_func`.
-
-    Important:
-
-        When using gradient checkpointing with `use_reentrant=True`, inputs that require gradients (e.g. hidden states)
-        must be passed as positional arguments (`*args`) rather than keyword arguments to properly propagate gradients.
-
-        Example:
-
-            ```python
-            >>> # Correct - hidden_states passed as positional arg
-            >>> out = self.layer(hidden_states, attention_mask=attention_mask)
-
-            >>> # Incorrect - hidden_states passed as keyword arg
-            >>> out = self.layer(hidden_states=hidden_states, attention_mask=attention_mask)
-            ```
-    """
-
     gradient_checkpointing = False
 
     def __call__(self, *args, **kwargs):
@@ -2329,11 +2139,6 @@ class Dinov2SelfAttention(nn.Module):
 
 
 class Dinov2SelfOutput(nn.Module):
-    """
-    The residual connection is defined in Dinov2Layer instead of here (as is the case with other models), due to the
-    layernorm applied before each block.
-    """
-
     def __init__(self, config: Dinov2Config) -> None:
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
@@ -2487,51 +2292,13 @@ class Dinov2Layer(GradientCheckpointingLayer):
 
 @dataclass
 class BackboneOutput(ModelOutput):
-    """
-    Base class for outputs of backbones.
-
-    Args:
-        feature_maps (`tuple(torch.FloatTensor)` of shape `(batch_size, num_channels, height, width)`):
-            Feature maps of the stages.
-        hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):
-            Tuple of `torch.FloatTensor` (one for the output of the embeddings + one for the output of each layer) of
-            shape `(batch_size, sequence_length, hidden_size)` or `(batch_size, num_channels, height, width)`,
-            depending on the backbone.
-
-            Hidden-states of the model at the output of each stage plus the initial embedding outputs.
-        attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):
-            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,
-            sequence_length)`. Only applicable if the backbone uses attention.
-
-            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention
-            heads.
-    """
-
     feature_maps: Optional[tuple[torch.FloatTensor]] = None
     hidden_states: Optional[tuple[torch.FloatTensor, ...]] = None
     attentions: Optional[tuple[torch.FloatTensor, ...]] = None
 
 
 class ModelOutput(OrderedDict):
-    """
-    Base class for all model outputs as dataclass. Has a `__getitem__` that allows indexing by integer or slice (like a
-    tuple) or strings (like a dictionary) that will ignore the `None` attributes. Otherwise behaves like a regular
-    python dictionary.
-
-    <Tip warning={true}>
-
-    You can't unpack a `ModelOutput` directly. Use the [`~utils.ModelOutput.to_tuple`] method to convert it to a tuple
-    before.
-
-    </Tip>
-    """
-
     def __init_subclass__(cls) -> None:
-        """Register subclasses as pytree nodes.
-
-        This is necessary to synchronize gradients when using `torch.nn.parallel.DistributedDataParallel` with
-        `static_graph=True` with modules that output `ModelOutput` subclasses.
-        """
         if is_torch_available():
             if version.parse(get_torch_version()) >= version.parse("2.2"):
                 from torch.utils._pytree import register_pytree_node
@@ -2673,33 +2440,11 @@ class ModelOutput(OrderedDict):
         return callable, args, *remaining
 
     def to_tuple(self) -> tuple[Any]:
-        """
-        Convert self to a tuple containing all the attributes/keys that are not `None`.
-        """
         return tuple(self[k] for k in self.keys())
 
 
 @dataclass
 class BaseModelOutput(ModelOutput):
-    """
-    Base class for model's outputs, with potential hidden states and attentions.
-
-    Args:
-        last_hidden_state (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`):
-            Sequence of hidden-states at the output of the last layer of the model.
-        hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):
-            Tuple of `torch.FloatTensor` (one for the output of the embeddings, if the model has an embedding layer, +
-            one for the output of each layer) of shape `(batch_size, sequence_length, hidden_size)`.
-
-            Hidden-states of the model at the output of each layer plus the optional initial embedding outputs.
-        attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):
-            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,
-            sequence_length)`.
-
-            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention
-            heads.
-    """
-
     last_hidden_state: Optional[torch.FloatTensor] = None
     hidden_states: Optional[tuple[torch.FloatTensor, ...]] = None
     attentions: Optional[tuple[torch.FloatTensor, ...]] = None
@@ -2826,30 +2571,6 @@ class Dinov2Backbone(Dinov2PreTrainedModel):
         output_attentions: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> BackboneOutput:
-        r"""
-        Examples:
-
-        ```python
-        >>> from transformers import AutoImageProcessor, AutoBackbone
-        >>> import torch
-        >>> from PIL import Image
-        >>> import requests
-
-        >>> url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-        >>> image = Image.open(requests.get(url, stream=True).raw)
-
-        >>> processor = AutoImageProcessor.from_pretrained("facebook/dinov2-base")
-        >>> model = AutoBackbone.from_pretrained(
-        ...     "facebook/dinov2-base", out_features=["stage2", "stage5", "stage8", "stage11"]
-        ... )
-
-        >>> inputs = processor(image, return_tensors="pt")
-
-        >>> outputs = model(**inputs)
-        >>> feature_maps = outputs.feature_maps
-        >>> list(feature_maps[-1].shape)
-        [1, 768, 16, 16]
-        ```"""
         return_dict = (
             return_dict if return_dict is not None else self.config.use_return_dict
         )
