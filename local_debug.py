@@ -4,19 +4,16 @@ import inspect
 import os
 from collections import OrderedDict
 from collections.abc import Iterable
-from dataclasses import dataclass, fields, is_dataclass
 from functools import partial
 from pathlib import Path
 from typing import Any, Optional, Union
-import re
 import torch
-from packaging import version
 from PIL import Image
 from safetensors import safe_open
 from torch import nn
 
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
-from transformers.utils.generic import torch_int, is_tensor
+from transformers.utils.generic import torch_int
 import enum
 from tqdm import tqdm
 import logging
@@ -31,10 +28,6 @@ class BackboneType(enum.Enum):
 
 def is_torch_available():
     return True
-
-
-def get_torch_version():
-    return "2.2"
 
 
 default_home = os.path.join(os.path.expanduser("~"), ".cache")
@@ -567,16 +560,9 @@ class LocalPretrainedModel(nn.Module):
         return requested_attention or "sdpa"
 
     def _init_backbone(self, config) -> None:
-        """
-        Method to initialize the backbone. This method is called by the constructor of the base class after the
-        pretrained model weights have been loaded.
-        """
         self.config = config
         self.backbone_type = BackboneType.TRANSFORMERS
-        if self.backbone_type == BackboneType.TRANSFORMERS:
-            self._init_transformers_backbone(config)
-        else:
-            raise ValueError(f"backbone_type {self.backbone_type} not supported.")
+        self._init_transformers_backbone(config)
 
     def _init_transformers_backbone(self, config) -> None:
         stage_names = getattr(config, "stage_names")
@@ -693,20 +679,6 @@ class LocalPretrainedModel(nn.Module):
             **kwargs,
         )
 
-        transformers_explicit_filename = getattr(config, "transformers_weights", None)
-
-        if transformers_explicit_filename is not None:
-            if not transformers_explicit_filename.endswith(
-                ".safetensors"
-            ) and not transformers_explicit_filename.endswith(
-                ".safetensors.index.json"
-            ):
-                raise ValueError(
-                    "The transformers file in the config seems to be incorrect: it is neither a safetensors file "
-                    "(*.safetensors) nor a safetensors index file (*.safetensors.index.json): "
-                    f"{transformers_explicit_filename}"
-                )
-
         resolved_safetensors_file = try_to_load_from_cache(
             pretrained_model_name_or_path, "model.safetensors"
         )
@@ -782,31 +754,11 @@ class DepthAnythingConfig(LocalPretrainedConfig):
         self.depth_estimation_type = depth_estimation_type
         self.max_depth = max_depth if max_depth else 1
 
-    @property
-    def sub_configs(self):
-        return (
-            {"backbone_config": type(self.backbone_config)}
-            if getattr(self, "backbone_config", None) is not None
-            else {}
-        )
-
 
 class DepthAnythingPreTrainedModel(LocalPretrainedModel):
     base_model_prefix = "depth_anything"
     main_input_name = "pixel_values"
     supports_gradient_checkpointing = True
-
-    def _init_weights(self, module):
-        """Initialize the weights"""
-        if isinstance(module, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
-            # Slightly different from the TF version which uses truncated_normal for initialization
-            # cf https://github.com/pytorch/pytorch/pull/5617
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-            if module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
 
     def _get_key_renaming_mapping(
         self,
@@ -864,7 +816,6 @@ if is_torch_available():
     )
 
 
-@dataclass
 class DepthEstimatorOutput(ModelOutput):
     loss: Optional[torch.FloatTensor] = None
     predicted_depth: Optional[torch.FloatTensor] = None
@@ -1460,7 +1411,6 @@ class Dinov2Layer(GradientCheckpointingLayer):
         return outputs
 
 
-@dataclass
 class BackboneOutput(ModelOutput):
     feature_maps: Optional[tuple[torch.FloatTensor]] = None
     hidden_states: Optional[tuple[torch.FloatTensor, ...]] = None
@@ -1468,50 +1418,6 @@ class BackboneOutput(ModelOutput):
 
 
 class ModelOutput(OrderedDict):
-    def __init_subclass__(cls) -> None:
-        if is_torch_available():
-            if version.parse(get_torch_version()) >= version.parse("2.2"):
-                from torch.utils._pytree import register_pytree_node
-
-                register_pytree_node(
-                    cls,
-                    _model_output_flatten,
-                    partial(_model_output_unflatten, output_type=cls),
-                    serialized_type_name=f"{cls.__module__}.{cls.__name__}",
-                )
-            else:
-                from torch.utils._pytree import _register_pytree_node
-
-                _register_pytree_node(
-                    cls,
-                    _model_output_flatten,
-                    partial(_model_output_unflatten, output_type=cls),
-                )
-
-    def __post_init__(self):
-        """Check the ModelOutput dataclass.
-
-        Only occurs if @dataclass decorator has been used.
-        """
-        class_fields = fields(self)
-
-        # Safety and consistency checks
-
-        first_field = getattr(self, class_fields[0].name)
-        other_fields_are_none = all(
-            getattr(self, field.name) is None for field in class_fields[1:]
-        )
-
-        if other_fields_are_none and not is_tensor(first_field):
-            pass
-            # if we provided an iterator as first field and the iterator is a (key, value) iterator
-            # set the associated fields
-        else:
-            for field in class_fields:
-                v = getattr(self, field.name)
-                if v is not None:
-                    self[field.name] = v
-
     def __setitem__(self, key, value):
         # Will raise a KeyException if needed
         super().__setitem__(key, value)
@@ -1519,7 +1425,6 @@ class ModelOutput(OrderedDict):
         super().__setattr__(key, value)
 
 
-@dataclass
 class BaseModelOutput(ModelOutput):
     last_hidden_state: Optional[torch.FloatTensor] = None
     hidden_states: Optional[tuple[torch.FloatTensor, ...]] = None
@@ -1707,14 +1612,6 @@ class DepthAnythingForDepthEstimation(DepthAnythingPreTrainedModel):
             hidden_states=outputs.hidden_states if output_hidden_states else None,
             attentions=outputs.attentions,
         )
-
-
-def _dict_from_json_file(json_file: Union[str, os.PathLike]):
-    with open(json_file, encoding="utf-8") as reader:
-        text = reader.read()
-    import json
-
-    return json.loads(text)
 
 
 def check():
