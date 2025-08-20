@@ -15,16 +15,14 @@ from PIL import Image
 from safetensors import safe_open
 from torch import nn
 
-# TODO: check to remove dependencies
-from transformers import (
-    logging,
-)
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
 from transformers.utils.generic import torch_int, is_tensor
-
 import enum
+from tqdm import tqdm
+import logging
 
-logger = logging.get_logger(__name__)
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 class BackboneType(enum.Enum):
@@ -1107,7 +1105,7 @@ class LocalPretrainedModel(nn.Module):
             (shard_file, state_dict, device_map, key_renaming_mapping, model)
             for shard_file in checkpoint_files
         ]
-        args_list = logging.tqdm(args_list, desc="Loading checkpoint shards")
+        args_list = tqdm(args_list, desc="Loading checkpoint shards")
 
         error_msgs = []
         for args in args_list:
@@ -2723,9 +2721,9 @@ def check():
     weight = model.state_dict()[
         "backbone.encoder.layer.0.attention.attention.key.weight"
     ]
-    print(weight.dtype)
-    print(weight.shape)
-    print(weight[0][0:10])
+    logging.info(weight.dtype)
+    logging.info(weight.shape)
+    logging.info(weight[0][0:10])
 
     from transformers import DPTImageProcessor
 
