@@ -1573,6 +1573,12 @@ def check():
     image = Image.open("images/room.jpg")
     inputs = image_processor(images=image, return_tensors="pt")
 
+    # run model on cuda
+    model.to("cuda")
+    ## compile is not working
+    # model = torch.compile(model)
+    inputs = inputs.to("cuda")
+
     with torch.no_grad():
         outputs = model(**inputs)
 
