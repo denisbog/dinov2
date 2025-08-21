@@ -1,10 +1,7 @@
 import collections
-import copy
 import inspect
 import os
 from collections import OrderedDict
-from collections.abc import Iterable
-from functools import partial
 from pathlib import Path
 from typing import Any, Optional, Union
 import torch
@@ -13,10 +10,12 @@ from safetensors import safe_open
 from torch import nn
 
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+from transformers.activations import ACT2FN
 from transformers.utils.generic import torch_int
 import enum
 from tqdm import tqdm
 import logging
+from typing import Callable
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -143,8 +142,6 @@ str_to_torch_dtype = {
 
 def load_state_dict(
     checkpoint_file: Union[str, os.PathLike],
-    map_location: Optional[Union[str, torch.device]] = "cpu",
-    weights_only: bool = True,
 ):
     with safe_open(checkpoint_file, framework="pt") as f:
         state_dict = {}
@@ -225,11 +222,9 @@ def _load_state_dict_into_meta_model(
 
 def load_shard_file(args):
     (shard_file, state_dict, device_map, key_renaming_mapping, model_to_load) = args
-    map_location = "meta"
-
     # If shard_file is "", we use the existing state_dict instead of loading it
     if shard_file != "":
-        state_dict = load_state_dict(shard_file, map_location=map_location)
+        state_dict = load_state_dict(shard_file)
 
     # Fix the key names
     state_dict = {
@@ -364,7 +359,6 @@ class LocalPretrainedConfig:
     def get_config_dict(
         cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        original_kwargs = copy.deepcopy(kwargs)
         # Get config dict associated with the base config file
         config_dict, kwargs = cls._get_config_dict(
             pretrained_model_name_or_path, **kwargs
@@ -430,7 +424,6 @@ class LocalPretrainedConfig:
         cache_dir: Optional[Union[str, os.PathLike]] = None,
         force_download: bool = False,
         local_files_only: bool = False,
-        token: Optional[Union[str, bool]] = None,
         revision: str = "main",
         **kwargs,
     ):
@@ -446,7 +439,6 @@ class LocalPretrainedConfig:
 
     @classmethod
     def from_dict(cls, config_dict: dict[str, Any], **kwargs):
-        return_unused_kwargs = kwargs.pop("return_unused_kwargs", False)
         # Those arguments may be passed along for our internal telemetry.
         # We remove them so they don't appear in `return_unused_kwargs`.
         kwargs.pop("_from_auto", None)
@@ -529,9 +521,6 @@ class Dinov2Config(LocalPretrainedConfig):
         self.torch_dtype = torch_dtype
 
 
-CONFIG_NAME = "config.json"
-
-
 class LocalPretrainedModel(nn.Module):
     backbone_type: Optional[BackboneType] = None
 
@@ -539,23 +528,18 @@ class LocalPretrainedModel(nn.Module):
         super().__init__()
         self.config = config
         self.config._attn_implementation_internal = (
-            self._check_and_adjust_attn_implementation(
-                self.config._attn_implementation, is_init_check=True
-            )
+            self._check_and_adjust_attn_implementation(self.config._attn_implementation)
         )
 
     def _check_and_adjust_attn_implementation(
-        self, attn_implementation: Optional[str], is_init_check: bool = False
+        self, attn_implementation: Optional[str]
     ) -> str:
         # Register kernel if relevant
-        attn_implementation = self.get_correct_attn_implementation(
-            attn_implementation, is_init_check
-        )
-
+        attn_implementation = self.get_correct_attn_implementation(attn_implementation)
         return attn_implementation
 
     def get_correct_attn_implementation(
-        self, requested_attention: Optional[str], is_init_check: bool = False
+        self, requested_attention: Optional[str]
     ) -> str:
         return requested_attention or "sdpa"
 
@@ -592,41 +576,14 @@ class LocalPretrainedModel(nn.Module):
         state_dict: Optional[dict],
         checkpoint_files: Optional[list[str]],
         pretrained_model_name_or_path: Optional[str],
-        ignore_mismatched_sizes: bool = False,
         device_map: Optional[dict] = None,
-        dtype: Optional[torch.dtype] = None,
-        key_mapping: Optional[dict[str, str]] = None,
-        weights_only: bool = True,
     ):
-        original_checkpoint_keys = list(
-            load_state_dict(
-                checkpoint_files[0], map_location="meta", weights_only=weights_only
-            ).keys()
-        )
-        prefix = model.base_model_prefix
-        has_prefix_module = (
-            any(s.startswith(prefix) for s in original_checkpoint_keys)
-            if len(prefix) > 0
-            else False
-        )
-        expects_prefix_module = hasattr(model, prefix) if len(prefix) > 0 else False
-        loading_task_model_from_base_state_dict = (
-            not has_prefix_module and expects_prefix_module
-        )
-        loading_base_model_from_task_state_dict = (
-            has_prefix_module and not expects_prefix_module
-        )
+        original_checkpoint_keys = list(load_state_dict(checkpoint_files[0]).keys())
         key_renaming_mapping = model._get_key_renaming_mapping(
             original_checkpoint_keys,
-            key_mapping,
-            loading_base_model_from_task_state_dict,
-            loading_task_model_from_base_state_dict,
         )
 
-        mismatched_keys, mismatched_shapes = [], []
-        key_renaming_mapping = {
-            k: v for k, v in key_renaming_mapping.items() if v not in mismatched_keys
-        }
+        key_renaming_mapping = {k: v for k, v in key_renaming_mapping.items()}
         args_list = [
             (shard_file, state_dict, device_map, key_renaming_mapping, model)
             for shard_file in checkpoint_files
@@ -658,13 +615,8 @@ class LocalPretrainedModel(nn.Module):
         proxies = kwargs.pop("proxies", None)
         from_pipeline = kwargs.pop("_from_pipeline", None)
         from_auto_class = kwargs.pop("_from_auto", False)
-        torch_dtype = kwargs.pop("torch_dtype", None)
-        device_map = kwargs.pop("device_map", None)
-        offload_folder = kwargs.pop("offload_folder", None)
-        offload_state_dict = kwargs.pop("offload_state_dict", False)
         subfolder = kwargs.pop("subfolder", "")
         gguf_file = kwargs.pop("gguf_file", None)
-        device_mesh = kwargs.pop("device_mesh", None)
 
         # Load config
         config_path = pretrained_model_name_or_path
@@ -687,7 +639,6 @@ class LocalPretrainedModel(nn.Module):
 
         checkpoint_files = [resolved_safetensors_file]
 
-        torch_dtype = torch.float32
         # Find the correct dtype based on current state
         config.name_or_path = pretrained_model_name_or_path
         model = cls(config, *model_args, **model_kwargs)
@@ -703,7 +654,6 @@ class LocalPretrainedModel(nn.Module):
                 state_dict,
                 checkpoint_files,
                 pretrained_model_name_or_path,
-                dtype=torch_dtype,
             )
         # make sure token embedding weights are still tied if needed
         # model.tie_weights()
@@ -763,9 +713,6 @@ class DepthAnythingPreTrainedModel(LocalPretrainedModel):
     def _get_key_renaming_mapping(
         self,
         checkpoint_keys: list[str],
-        key_mapping: Optional[dict[str, str]] = None,
-        loading_base_model_from_task_state_dict: bool = False,
-        loading_task_model_from_base_state_dict: bool = False,
     ):
         key_renaming_mapping = {}
         for key in checkpoint_keys:
@@ -776,44 +723,11 @@ class DepthAnythingPreTrainedModel(LocalPretrainedModel):
 
 
 class ModelOutput(OrderedDict):
-    def __init_subclass__(cls) -> None:
-        from torch.utils._pytree import register_pytree_node
-
-        register_pytree_node(
-            cls,
-            _model_output_flatten,
-            partial(_model_output_unflatten, output_type=cls),
-            serialized_type_name=f"{cls.__module__}.{cls.__name__}",
-        )
-
     def __setitem__(self, key, value):
         # Will raise a KeyException if needed
         super().__setitem__(key, value)
         # Don't call self.__setattr__ to avoid recursion errors
         super().__setattr__(key, value)
-
-
-if is_torch_available():
-    import torch.utils._pytree as _torch_pytree
-
-    def _model_output_flatten(
-        output: ModelOutput,
-    ) -> tuple[list[Any], "_torch_pytree.Context"]:
-        return list(output.values()), list(output.keys())
-
-    def _model_output_unflatten(
-        values: Iterable[Any],
-        context: "_torch_pytree.Context",
-        output_type=None,
-    ) -> ModelOutput:
-        return output_type(**dict(zip(context, values)))
-
-    _torch_pytree.register_pytree_node(
-        ModelOutput,
-        _model_output_flatten,
-        partial(_model_output_unflatten, output_type=ModelOutput),
-        serialized_type_name=f"{ModelOutput.__module__}.{ModelOutput.__name__}",
-    )
 
 
 class DepthEstimatorOutput(ModelOutput):
@@ -1177,10 +1091,6 @@ class Dinov2PatchEmbeddings(nn.Module):
         return embeddings
 
 
-class GradientCheckpointingLayer(nn.Module):
-    gradient_checkpointing = False
-
-
 # Copied from transformers.models.vit.modeling_vit.eager_attention_forward
 def eager_attention_forward(
     module: nn.Module,
@@ -1190,7 +1100,6 @@ def eager_attention_forward(
     attention_mask: Optional[torch.Tensor],
     scaling: float,
     dropout: float = 0.0,
-    **kwargs,
 ):
     # Take the dot product between "query" and "key" to get the raw attention scores.
     attn_weights = torch.matmul(query, key.transpose(-1, -2)) * scaling
@@ -1243,7 +1152,7 @@ class Dinov2SelfAttention(nn.Module):
         head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
     ) -> Union[tuple[torch.Tensor, torch.Tensor], tuple[torch.Tensor]]:
-        batch_size, seq_length, _ = hidden_states.shape
+        batch_size, _, _ = hidden_states.shape
         key_layer = (
             self.key(hidden_states)
             .view(batch_size, -1, self.num_attention_heads, self.attention_head_size)
@@ -1293,16 +1202,11 @@ class Dinov2SelfOutput(nn.Module):
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def forward(
-        self, hidden_states: torch.Tensor, input_tensor: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
 
         return hidden_states
-
-
-from transformers.activations import ACT2FN
 
 
 class Dinov2MLP(nn.Module):
@@ -1347,7 +1251,7 @@ class Dinov2Attention(nn.Module):
     ) -> Union[tuple[torch.Tensor, torch.Tensor], tuple[torch.Tensor]]:
         self_outputs = self.attention(hidden_states, head_mask, output_attentions)
 
-        attention_output = self.output(self_outputs[0], hidden_states)
+        attention_output = self.output(self_outputs[0])
 
         outputs = (attention_output,) + self_outputs[
             1:
@@ -1355,9 +1259,38 @@ class Dinov2Attention(nn.Module):
         return outputs
 
 
-class Dinov2Layer(GradientCheckpointingLayer):
-    """This corresponds to the Block class in the original implementation."""
+# Copied from transformers.models.beit.modeling_beit.drop_path
+def drop_path(
+    input: torch.Tensor, drop_prob: float = 0.0, training: bool = False
+) -> torch.Tensor:
+    if drop_prob == 0.0 or not training:
+        return input
+    keep_prob = 1 - drop_prob
+    shape = (input.shape[0],) + (1,) * (
+        input.ndim - 1
+    )  # work with diff dim tensors, not just 2D ConvNets
+    random_tensor = keep_prob + torch.rand(
+        shape, dtype=input.dtype, device=input.device
+    )
+    random_tensor.floor_()  # binarize
+    output = input.div(keep_prob) * random_tensor
+    return output
 
+
+# Copied from transformers.models.beit.modeling_beit.BeitDropPath
+class Dinov2DropPath(nn.Module):
+    def __init__(self, drop_prob: Optional[float] = None) -> None:
+        super().__init__()
+        self.drop_prob = drop_prob
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        return drop_path(hidden_states, self.drop_prob, self.training)
+
+    def extra_repr(self) -> str:
+        return f"p={self.drop_prob}"
+
+
+class Dinov2Layer(nn.Module):
     def __init__(self, config: Dinov2Config) -> None:
         super().__init__()
 
@@ -1365,7 +1298,9 @@ class Dinov2Layer(GradientCheckpointingLayer):
         self.attention = Dinov2Attention(config)
         self.layer_scale1 = Dinov2LayerScale(config)
         self.drop_path = (
-            Dinov2DropPath(config.drop_path_rate)
+            Dinov2DropPath(
+                config.drop_path_rate
+            )  # drop path is not uses for evaluation but keeping it as it part of the architecture
             if config.drop_path_rate > 0.0
             else nn.Identity()
         )
@@ -1417,14 +1352,6 @@ class BackboneOutput(ModelOutput):
     attentions: Optional[tuple[torch.FloatTensor, ...]] = None
 
 
-class ModelOutput(OrderedDict):
-    def __setitem__(self, key, value):
-        # Will raise a KeyException if needed
-        super().__setitem__(key, value)
-        # Don't call self.__setattr__ to avoid recursion errors
-        super().__setattr__(key, value)
-
-
 class BaseModelOutput(ModelOutput):
     last_hidden_state: Optional[torch.FloatTensor] = None
     hidden_states: Optional[tuple[torch.FloatTensor, ...]] = None
@@ -1446,7 +1373,6 @@ class Dinov2Encoder(nn.Module):
         head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
-        return_dict: bool = True,
     ) -> Union[tuple, BaseModelOutput]:
         all_hidden_states = () if output_hidden_states else None
         all_self_attentions = () if output_attentions else None
@@ -1527,7 +1453,6 @@ class Dinov2Backbone(Dinov2PreTrainedModel):
             embedding_output,
             output_hidden_states=True,
             output_attentions=output_attentions,
-            return_dict=return_dict,
         )
 
         hidden_states = outputs.hidden_states if return_dict else outputs[1]
