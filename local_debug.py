@@ -17,6 +17,8 @@ from tqdm import tqdm
 import logging
 from typing import Callable
 
+from dataclasses import dataclass
+
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
@@ -730,6 +732,7 @@ class ModelOutput(OrderedDict):
         super().__setattr__(key, value)
 
 
+@dataclass
 class DepthEstimatorOutput(ModelOutput):
     loss: Optional[torch.FloatTensor] = None
     predicted_depth: Optional[torch.FloatTensor] = None
@@ -1346,12 +1349,14 @@ class Dinov2Layer(nn.Module):
         return outputs
 
 
+@dataclass
 class BackboneOutput(ModelOutput):
     feature_maps: Optional[tuple[torch.FloatTensor]] = None
     hidden_states: Optional[tuple[torch.FloatTensor, ...]] = None
     attentions: Optional[tuple[torch.FloatTensor, ...]] = None
 
 
+@dataclass
 class BaseModelOutput(ModelOutput):
     last_hidden_state: Optional[torch.FloatTensor] = None
     hidden_states: Optional[tuple[torch.FloatTensor, ...]] = None
@@ -1575,8 +1580,7 @@ def check():
 
     # run model on cuda
     model.to("cuda")
-    ## compile is not working
-    # model = torch.compile(model)
+    model = torch.compile(model)
     inputs = inputs.to("cuda")
 
     with torch.no_grad():
