@@ -1546,7 +1546,7 @@ class DepthAnythingForDepthEstimation(DepthAnythingPreTrainedModel):
 
 def check():
     model = DepthAnythingForDepthEstimation.from_pretrained(
-        "depth-anything/Depth-Anything-V2-Small-hf"
+        "depth-anything/Depth-Anything-V2-Large-hf"
     )
     # compare one layer
     weight = model.state_dict()[
@@ -1577,14 +1577,18 @@ def check():
 
     image = Image.open("images/room.jpg")
     inputs = image_processor(images=image, return_tensors="pt")
-
+    torch.set_float32_matmul_precision("high")
     # run model on cuda
     model.to("cuda")
-    model = torch.compile(model)
+    # model = torch.compile(model)
     inputs = inputs.to("cuda")
+    import time
 
     with torch.no_grad():
+        start = time.time()
         outputs = model(**inputs)
+        end = time.time()
+        print(f"duration: {end - start}")
 
     post_processed_output = image_processor.post_process_depth_estimation(
         outputs,
